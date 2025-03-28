@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>PP - Websockets</title>
+</head>
+
+<body>
+    <div class="center">
+        <h1>Chat Application</h1>
+        <h3 id="chat-header">Currently in chat: general</h3>
+
+        <form id="chatroom-selection">
+            <label for="chatroom">Chatroom:</label>
+            <input type="text" id="chatroom" name="chatroom"><br><br>
+            <input type="submit" value="Change chatroom">
+        </form>
+
+        <br>
+
+        <textarea class="messagearea" id="chatmessages" readonly name="chatmessages" rows="10" cols="50"
+            placeholder="Welcome to the chatroom. Messages will appear here."></textarea>
+
+        <br>
+
+        <form id="chatroom-message">
+            <label for="message">Message:</label>
+            <input type="text" id="message" name="message"><br><br>
+            <input type="submit" value="Send message">
+        </form>
+    </div>
+
+    <script type="text/javascript">
+        var selectedchat = "general";
+        var socket;
+
+        function changeChatRoom(event) {
+            event.preventDefault();
+
+            var newchat = document.getElementById("chatroom").value.trim();
+            if (newchat !== "" && newchat !== selectedchat) {
+                console.log("Switching chatroom from", selectedchat, "to", newchat);
+
+                selectedchat = newchat;
+                document.getElementById("chat-header").innerText = "Currently in chat: " + selectedchat;
+
+                if (socket) {
+                    socket.close();
+                }
+                document.getElementById("chatmessages").value = "";
+
+                socket = new WebSocket("ws://" + document.location.host + "/ws?chatroom=" + selectedchat);
+
+                socket.onmessage = (event) => {
+                    console.log("Received from server:", event.data);
+                    try {
+                        var data = JSON.parse(event.data);
+                        if (data.chatroom === selectedchat) {
+                            var chatbox = document.getElementById("chatmessages");
+                            chatbox.value += data.message + "\n";
+                            chatbox.scrollTop = chatbox.scrollHeight;
+                        }
+                    } catch (error) {
+                        console.log("Invalid message format:", event.data);
+                    }
+                };
+
+                socket.onopen = () => {
+                    console.log("Connected to chatroom:", selectedchat);
+                };
+
+                socket.onerror = (err) => {
+                    console.log("WebSocket error:", err);
+                };
+
+                socket.onclose = () => {
+                    console.log("Disconnected from chatroom:", selectedchat);
+                };
+            }
+
+            return false;
+        }
+
+        function sendMessage(event) {
+            event.preventDefault();
+
+            var newmessage = document.getElementById("message").value.trim();
+            if (newmessage && socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(newmessage);
+                console.log("Sent:", newmessage);
+                document.getElementById("message").value = "";
+            } else {
+                console.log("WebSocket is not open.");
+            }
+
+            return false;
+        }
+
+        window.onload = function () {
+            document.getElementById("chatroom-selection").onsubmit = changeChatRoom;
+            document.getElementById("chatroom-message").onsubmit = sendMessage;
+            socket = new WebSocket("ws://" + document.location.host + "/ws?chatroom=" + selectedchat);
+            socket.onmessage = (event) => {
+                console.log("Received from server:", event.data);
+
+                var data = JSON.parse(event.data);
+                if (data.chatroom === selectedchat) {
+                    var chatbox = document.getElementById("chatmessages");
+                    chatbox.value += data.message + "\n";
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                }
+            };
+        };
+    </script>
+</body>
+
+</html>

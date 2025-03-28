@@ -1,43 +1,46 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"time"
+	"strings"
 
 	"golang.org/x/net/websocket"
 )
 
 type Server struct {
-	conns map[*websocket.Conn]bool
+	chatrooms map[string]map[*websocket.Conn]bool
 }
 
 func NewServer() *Server {
 	return &Server{
-		conns: make(map[*websocket.Conn]bool),
-	}
-}
-
-func (s *Server) handleWSTimefeed(ws *websocket.Conn) {
-	fmt.Println("new incoming connection from client to orderbook feed: ", ws.RemoteAddr())
-
-	for {
-		payload := fmt.Sprintf("timefeed data => %d\n", time.Now().UnixNano())
-		ws.Write([]byte(payload))
-		time.Sleep(time.Second)
+		chatrooms: make(map[string]map[*websocket.Conn]bool),
 	}
 }
 
 func (s *Server) handleWS(ws *websocket.Conn) {
-	fmt.Println("new incoming connection from client:", ws.RemoteAddr())
+	chatroom := "general"
+	if strings.Contains(ws.Request().URL.RawQuery, "chatroom=") {
+		params := strings.Split(ws.Request().URL.RawQuery, "=")
+		if len(params) > 1 {
+			chatroom = params[1]
+		}
+	}
 
-	s.conns[ws] = true
-
-	s.readLoop(ws)
+	fmt.Println("New connection in chatroom:", chatroom, "from:", ws.RemoteAddr())
+	if s.chatrooms[chatroom] == nil {
+		s.chatrooms[chatroom] = make(map[*websocket.Conn]bool)
+	}
+	s.chatrooms[chatroom][ws] = true
+	s.readLoop(ws, chatroom)
+	delete(s.chatrooms[chatroom], ws)
+	ws.Close()
+	fmt.Println("Client disconnected from", chatroom)
 }
 
-func (s *Server) readLoop(ws *websocket.Conn) {
+func (s *Server) readLoop(ws *websocket.Conn, chatroom string) {
 	buff := make([]byte, 1024)
 	for {
 		n, err := ws.Read(buff)
@@ -45,20 +48,27 @@ func (s *Server) readLoop(ws *websocket.Conn) {
 			if err == io.EOF {
 				break
 			}
-			fmt.Println("read error:", err)
+			fmt.Println("Read error:", err)
 			continue
 		}
-		msg := buff[:n]
 
-		s.broadcast(msg)
+		msg := string(buff[:n])
+		fmt.Println("Received message in", chatroom, ":", msg)
+		messagePayload, _ := json.Marshal(map[string]string{
+			"chatroom": chatroom,
+			"message":  msg,
+		})
+		s.broadcast(chatroom, messagePayload)
 	}
 }
 
-func (s *Server) broadcast(b []byte) {
-	for ws := range s.conns {
+func (s *Server) broadcast(chatroom string, msg []byte) {
+	for ws := range s.chatrooms[chatroom] {
 		go func(ws *websocket.Conn) {
-			if _, err := ws.Write(b); err != nil {
-				fmt.Println("write error: ", err)
+			if _, err := ws.Write(msg); err != nil {
+				fmt.Println("Write error:", err)
+				ws.Close()
+				delete(s.chatrooms[chatroom], ws)
 			}
 		}(ws)
 	}
@@ -67,6 +77,6 @@ func (s *Server) broadcast(b []byte) {
 func main() {
 	server := NewServer()
 	http.Handle("/ws", websocket.Handler(server.handleWS))
-	http.Handle("/timefeed", websocket.Handler(server.handleWSTimefeed))
+	http.Handle("/", http.FileServer(http.Dir("./frontend")))
 	http.ListenAndServe(":3000", nil)
 }
